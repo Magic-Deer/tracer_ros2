@@ -48,17 +48,17 @@ class TracerMessenger {
     odom_pub_ =
         node_->create_publisher<nav_msgs::msg::Odometry>(odom_topic_name_, 50);
     status_pub_ = node_->create_publisher<tracer_msgs::msg::TracerStatus>(
-        "/tracer_status", 10);
+        "status", 10);
     rc_status_pub_ = node_->create_publisher<tracer_msgs::msg::TracerRCState>(
-        "/tracer_rc_status",10);
+        "rc_status",10);
         
     // cmd subscriber
     motion_cmd_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", 5,
+        "cmd_vel", 5,
         std::bind(&TracerMessenger::TwistCmdCallback, this,
                   std::placeholders::_1));
     light_cmd_sub_ = node_->create_subscription<tracer_msgs::msg::TracerLightCmd>(
-        "/light_control", 5,
+        "light_control", 5,
         std::bind(&TracerMessenger::LightCmdCallback, this,
                   std::placeholders::_1));
 
@@ -116,29 +116,8 @@ class TracerMessenger {
           actuator.actuator_hs_state[i].rpm;
       status_msg.actuator_states[motor_id].current =
           actuator.actuator_hs_state[i].current;
-      //status_msg.actuator_states[motor_id].pulse_count =
-          //actuator.actuator_hs_state[i].pulse_count;
-
-      // actuator_ls_state
-      //motor_id = actuator.actuator_ls_state[i].motor_id;
-
-      //status_msg.actuator_states[motor_id].driver_voltage =
-          //actuator.actuator_ls_state[i].driver_voltage;
-      //status_msg.actuator_states[motor_id].driver_temperature =
-          //actuator.actuator_ls_state[i].driver_temp;
-      //status_msg.actuator_states[motor_id].motor_temperature =
-          //actuator.actuator_ls_state[i].motor_temp;
-      //status_msg.actuator_states[motor_id].driver_state =
-          //actuator.actuator_ls_state[i].driver_state;
     }
 
-    //status_msg.light_control_enabled = state.light_state.enable_cmd_ctrl;
-    //status_msg.front_light_state.mode = state.light_state.front_light.mode;
-    //status_msg.front_light_state.custom_value =
-        //state.light_state.front_light.custom_value;
-    // status_msg.rear_light_state.mode = state.light_state.rear_light.mode;
-    // status_msg.rear_light_state.custom_value =
-    //     state.light_state.rear_light.custom_value;
     status_pub_->publish(status_msg);
 
     // publish odometry and tf
@@ -146,6 +125,30 @@ class TracerMessenger {
 
     // record time for next integration
     last_time_ = current_time_;
+  }
+
+  void PublishSimStateToROS() {
+    current_time_ = node_->get_clock()->now();
+    double dt = 1.0 / sim_control_rate_;
+
+    tracer_msgs::msg::TracerStatus status_msg;
+
+    status_msg.header.stamp = current_time_;
+    status_msg.control_mode = 0x01;
+    status_msg.error_code = 0x00;
+    status_msg.battery_voltage = 29.5;
+    status_msg.light_control_enabled = false;
+    {
+      std::lock_guard<std::mutex> guard(twist_mutex_);
+      status_msg.linear_velocity = current_twist_.linear.x;
+      status_msg.angular_velocity = current_twist_.angular.z;
+    }
+    status_pub_->publish(status_msg);
+
+    MotionStateMessage motion_msg;
+    motion_msg.linear_velocity = status_msg.linear_velocity;
+    motion_msg.angular_velocity = status_msg.angular_velocity;
+    PublishOdometryToROS(motion_msg, dt);
   }
 
  private:
@@ -223,34 +226,9 @@ class TracerMessenger {
             break;
           }
         }
-
-          // switch (msg->rear_mode)
-          // {
-          //   case tracer_msgs::TracerLightCmd::LIGHT_CONST_OFF:
-          //   {
-          //       cmd.rear_light.mode = CONST_OFF;
-          //       break;
-          //   }
-          //   case tracer_msgs::TracerLightCmd::LIGHT_CONST_ON:
-          //   {
-          //       cmd.rear_light.mode = CONST_ON;
-          //       break;
-          //   }
-          //   case tracer_msgs::TracerLightCmd::LIGHT_BREATH:
-          //   {
-          //       cmd.rear_light.mode = BREATH;
-          //       break;
-          //   }
-          //   case tracer_msgs::TracerLightCmd::LIGHT_CUSTOM:
-          //   {
-          //       cmd.rear_light.mode = CUSTOM;
-          //       cmd.rear_light.custom_value = msg->rear_custom_value;
-          //       break;
-          //   }
-          // }
         tracer_->SetLightCommand(cmd.front_light.mode,cmd.front_light.custom_value);
-        } 
-      } else {
+      }
+    } else {
       std::cout << "simulated robot received light control cmd" << std::endl;
     }
   }

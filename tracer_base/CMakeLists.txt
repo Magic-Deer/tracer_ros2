@@ -54,13 +54,32 @@ set(DEPENDENCIES
 #   rclcpp tf2 tf2_ros std_msgs nav_msgs sensor_msgs robot_msgs)
 # target_link_libraries(mobile_base_messenger westonrobot::wrp_sdk)
 
+set(DEPENDENCIES
+  "nav_msgs"
+  "rclcpp"
+  "std_msgs"
+  "tf2"
+  "tf2_ros"
+  "tracer_msgs"
+  "sensor_msgs"
+  "tf2_geometry_msgs"
+)
+
 add_executable(tracer_base_node 
     src/tracer_base_ros.cpp
     src/tracer_base_node.cpp)
 target_link_libraries(tracer_base_node ugv_sdk)
-ament_target_dependencies(tracer_base_node rclcpp tf2 tf2_ros std_msgs nav_msgs sensor_msgs tf2_geometry_msgs tracer_msgs)
+ament_target_dependencies(tracer_base_node ${DEPENDENCIES})
 
-install(TARGETS tracer_base_node
+#add_executable(tracer_base_sim_node
+#    src/tracer_base_ros.cpp  # 共享文件（如果有）
+#    src/tracer_base_sim_node.cpp)  # 新节点的主文件
+#target_link_libraries(tracer_base_sim_node ugv_sdk)
+#ament_target_dependencies(tracer_base_sim_node ${DEPENDENCIES})
+
+install(TARGETS
+    tracer_base_node
+    #tracer_base_sim_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch

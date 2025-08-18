@@ -31,10 +31,9 @@ int main(int argc, char **argv) {
   //   std::signal(SIGINT, DetachRobot);
 
   robot = std::make_shared<TracerBaseRos>("tracer");
-  while(true) {
-    std::cout << "Robot initialized, start running ..." << std::endl;
-    robot->Run();
-  }
+
+  std::cout << "Robot initialized, start running ..." << std::endl;
+  robot->Run();
 
   return 0;
 }
