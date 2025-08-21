@@ -129,7 +129,14 @@ class TracerMessenger {
 
   void PublishSimStateToROS() {
     current_time_ = node_->get_clock()->now();
-    double dt = 1.0 / sim_control_rate_;
+
+    static bool init_run = true;
+    if (init_run) {
+      twist_time_ = last_time_ = current_time_;
+      init_run = false;
+      return;
+    }
+    double dt = (current_time_ - last_time_).seconds();
 
     tracer_msgs::msg::TracerStatus status_msg;
 
@@ -138,17 +145,15 @@ class TracerMessenger {
     status_msg.error_code = 0x00;
     status_msg.battery_voltage = 29.5;
     status_msg.light_control_enabled = false;
-    {
-      std::lock_guard<std::mutex> guard(twist_mutex_);
-      status_msg.linear_velocity = current_twist_.linear.x;
-      status_msg.angular_velocity = current_twist_.angular.z;
-    }
+    GetMotionForSim(status_msg.linear_velocity, status_msg.angular_velocity);
     status_pub_->publish(status_msg);
 
     MotionStateMessage motion_msg;
     motion_msg.linear_velocity = status_msg.linear_velocity;
     motion_msg.angular_velocity = status_msg.angular_velocity;
     PublishOdometryToROS(motion_msg, dt);
+
+    last_time_ = current_time_;
   }
 
  private:
@@ -163,6 +168,7 @@ class TracerMessenger {
   int sim_control_rate_ = 50;
 
   std::mutex twist_mutex_;
+  rclcpp::Time twist_time_;
   geometry_msgs::msg::Twist current_twist_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
@@ -188,6 +194,7 @@ class TracerMessenger {
       SetTracerMotionCommand(msg);
     } else {
       std::lock_guard<std::mutex> guard(twist_mutex_);
+      twist_time_ = node_->get_clock()->now();
       current_twist_ = *msg.get();
     }
     // ROS_INFO("Cmd received:%f, %f", msg->linear.x, msg->angular.z);
@@ -195,6 +202,17 @@ class TracerMessenger {
   void SetTracerMotionCommand(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     tracer_->SetMotionCommand(msg->linear.x, msg->angular.z);
+  }
+
+  void GetMotionForSim(double& linear, double& angular) {
+    std::lock_guard<std::mutex> guard(twist_mutex_);
+    linear = current_twist_.linear.x;
+    angular = current_twist_.angular.z;
+    double dt = (current_time_ - twist_time_).seconds();
+    if (dt > 0.03) {
+      linear = std::copysign(std::max(std::abs(linear) - 0.5*dt, 0.0), linear);
+      angular = std::copysign(std::max(std::abs(angular) - dt, 0.0), angular);
+    }
   }
 
   void LightCmdCallback(const tracer_msgs::msg::TracerLightCmd::SharedPtr msg) {
