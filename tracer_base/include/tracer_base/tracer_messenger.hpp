@@ -48,9 +48,9 @@ class TracerMessenger {
     odom_pub_ =
         node_->create_publisher<nav_msgs::msg::Odometry>(odom_topic_name_, 50);
     status_pub_ = node_->create_publisher<tracer_msgs::msg::TracerStatus>(
-        "status", 10);
+        "tracer_status", 10);
     rc_status_pub_ = node_->create_publisher<tracer_msgs::msg::TracerRCState>(
-        "rc_status",10);
+        "tracer_rc_status",10);
         
     // cmd subscriber
     motion_cmd_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(

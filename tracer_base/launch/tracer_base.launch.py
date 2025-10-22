@@ -44,7 +44,6 @@ def generate_launch_description():
     base_node = Node(
         package="tracer_base",
         executable="tracer_base_node",
-        namespace=LaunchConfiguration("robot_name"),
         parameters=[{
             'simulated_robot': LaunchConfiguration('use_sim'),
         }]
