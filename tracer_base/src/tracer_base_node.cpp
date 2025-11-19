@@ -28,7 +28,7 @@ void DetachRobot(int signal) {
 int main(int argc, char **argv) {
   // setup ROS node
   rclcpp::init(argc, argv);
-  //   std::signal(SIGINT, DetachRobot);
+  std::signal(SIGINT, DetachRobot);
 
   robot = std::make_shared<TracerBaseRos>("tracer");
 
