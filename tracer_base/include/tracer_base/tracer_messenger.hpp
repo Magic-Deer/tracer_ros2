@@ -273,8 +273,8 @@ class TracerMessenger {
     double d_y = linear_speed * std::sin(theta_) * dt;
     double d_theta = angular_speed * dt;
 
-    position_x_ += d_x;
-    position_y_ += d_y;
+    position_x_ += -d_x;  //此处增加负号，将xy和方向修改为和底盘移动相同
+    position_y_ += -d_y; //此处增加负号，将xy和方向修改为和底盘移动相同
     theta_ += d_theta;
 
     geometry_msgs::msg::Quaternion odom_quat =
@@ -304,9 +304,21 @@ class TracerMessenger {
     odom_msg.pose.pose.position.z = 0.0;
     odom_msg.pose.pose.orientation = odom_quat;
 
-    odom_msg.twist.twist.linear.x = linear_speed;
+    odom_msg.twist.twist.linear.x = -linear_speed; //此处增加负号，将xy和方向修改为和底盘移动相同
     odom_msg.twist.twist.linear.y = 0.0;
     odom_msg.twist.twist.angular.z = angular_speed;
+
+    // 设置 6x6 covariance，对角线非零
+    //odom_msg.pose.covariance = {
+    //    0.01, 0, 0, 0, 0, 0,
+    //    0, 0.01, 0, 0, 0, 0,
+    //    0, 0, 0.01, 0, 0, 0,
+    //    0, 0, 0, 0.01, 0, 0,
+    //    0, 0, 0, 0, 0.01, 0,
+    //    0, 0, 0, 0, 0, 0.01
+    //};
+   // odom_msg.twist.covariance = odom_msg.pose.covariance;
+
 
     odom_pub_->publish(odom_msg);
   }
