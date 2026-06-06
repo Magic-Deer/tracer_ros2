@@ -77,14 +77,17 @@ class TracerMessenger {
     double dt = (current_time_ - last_time_).seconds();
 
     auto state = tracer_->GetRobotState();
+    auto motion_state = state.motion_state;
+    // Tracer reports forward motion as negative linear velocity.
+    motion_state.linear_velocity = -motion_state.linear_velocity;
 
     // publish tracer state message
     tracer_msgs::msg::TracerStatus status_msg;
     tracer_msgs::msg::TracerRCState rc_state_msg;
     status_msg.header.stamp = current_time_;
 
-    status_msg.linear_velocity = state.motion_state.linear_velocity;
-    status_msg.angular_velocity = state.motion_state.angular_velocity;
+    status_msg.linear_velocity = motion_state.linear_velocity;
+    status_msg.angular_velocity = motion_state.angular_velocity;
 
     //status_msg.vehicle_state = state.system_state.vehicle_state;
     status_msg.control_mode = state.system_state.control_mode;
@@ -121,7 +124,7 @@ class TracerMessenger {
     status_pub_->publish(status_msg);
 
     // publish odometry and tf
-    PublishOdometryToROS(state.motion_state, dt);
+    PublishOdometryToROS(motion_state, dt);
 
     // record time for next integration
     last_time_ = current_time_;
@@ -273,8 +276,8 @@ class TracerMessenger {
     double d_y = linear_speed * std::sin(theta_) * dt;
     double d_theta = angular_speed * dt;
 
-    position_x_ += -d_x;  //此处增加负号，将xy和方向修改为和底盘移动相同
-    position_y_ += -d_y; //此处增加负号，将xy和方向修改为和底盘移动相同
+    position_x_ += d_x;
+    position_y_ += d_y;
     theta_ += d_theta;
 
     geometry_msgs::msg::Quaternion odom_quat =
@@ -304,21 +307,9 @@ class TracerMessenger {
     odom_msg.pose.pose.position.z = 0.0;
     odom_msg.pose.pose.orientation = odom_quat;
 
-    odom_msg.twist.twist.linear.x = -linear_speed; //此处增加负号，将xy和方向修改为和底盘移动相同
+    odom_msg.twist.twist.linear.x = linear_speed;
     odom_msg.twist.twist.linear.y = 0.0;
     odom_msg.twist.twist.angular.z = angular_speed;
-
-    // 设置 6x6 covariance，对角线非零
-    //odom_msg.pose.covariance = {
-    //    0.01, 0, 0, 0, 0, 0,
-    //    0, 0.01, 0, 0, 0, 0,
-    //    0, 0, 0.01, 0, 0, 0,
-    //    0, 0, 0, 0.01, 0, 0,
-    //    0, 0, 0, 0, 0.01, 0,
-    //    0, 0, 0, 0, 0, 0.01
-    //};
-   // odom_msg.twist.covariance = odom_msg.pose.covariance;
-
 
     odom_pub_->publish(odom_msg);
   }
