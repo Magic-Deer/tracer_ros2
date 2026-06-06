@@ -19,6 +19,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -35,6 +36,7 @@ include_directories(
 )
 
 set(DEPENDENCIES
+  "diagnostic_msgs"
   "geometry_msgs"
   "nav_msgs"
   "rclcpp"
@@ -55,6 +57,7 @@ set(DEPENDENCIES
 # target_link_libraries(mobile_base_messenger westonrobot::wrp_sdk)
 
 set(DEPENDENCIES
+  "diagnostic_msgs"
   "nav_msgs"
   "rclcpp"
   "std_msgs"

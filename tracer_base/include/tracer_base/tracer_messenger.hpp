@@ -13,7 +13,11 @@
 #include <string>
 #include <mutex>
 #include <memory>
+#include <chrono>
 
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -37,6 +41,7 @@ class TracerMessenger {
   void SetOdometryFrame(std::string frame) { odom_frame_ = frame; }
   void SetBaseFrame(std::string frame) { base_frame_ = frame; }
   void SetOdometryTopicName(std::string name) { odom_topic_name_ = name; }
+  void SetPortName(std::string name) { port_name_ = name; }
 
   void SetSimulationMode(int loop_rate) {
     simulated_robot_ = true;
@@ -51,6 +56,9 @@ class TracerMessenger {
         "tracer_status", 10);
     rc_status_pub_ = node_->create_publisher<tracer_msgs::msg::TracerRCState>(
         "tracer_rc_status",10);
+    diagnostics_pub_ =
+        node_->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+            "/diagnostics", 10);
         
     // cmd subscriber
     motion_cmd_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
@@ -63,20 +71,35 @@ class TracerMessenger {
                   std::placeholders::_1));
 
     tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);
+    last_time_ = node_->get_clock()->now();
+    last_diagnostics_time_ =
+        last_time_ - rclcpp::Duration::from_seconds(kDiagnosticsPeriodSec);
   }
 
   void PublishStateToROS() {
     current_time_ = node_->get_clock()->now();
 
-    static bool init_run = true;
-    if (init_run) {
+    auto state = tracer_->GetRobotState();
+    const double feedback_age_sec = GetFeedbackAgeSec(state);
+    const auto lifecycle_state = GetLifecycleState(state, feedback_age_sec);
+    if (lifecycle_state != lifecycle_state_) {
+      RCLCPP_INFO(node_->get_logger(), "tracer/base state: %s",
+                  LifecycleStateName(lifecycle_state));
+    }
+    lifecycle_state_ = lifecycle_state;
+
+    PublishDiagnostics(state, feedback_age_sec, lifecycle_state_);
+
+    if (lifecycle_state_ == LifecycleState::kConnecting) {
+      MaybeEnableCommandedMode();
+    }
+
+    if (lifecycle_state_ != LifecycleState::kReady) {
       last_time_ = current_time_;
-      init_run = false;
       return;
     }
-    double dt = (current_time_ - last_time_).seconds();
 
-    auto state = tracer_->GetRobotState();
+    double dt = (current_time_ - last_time_).seconds();
     auto motion_state = state.motion_state;
     // Tracer reports forward motion as negative linear velocity.
     motion_state.linear_velocity = -motion_state.linear_velocity;
@@ -166,6 +189,7 @@ class TracerMessenger {
   std::string odom_frame_;
   std::string base_frame_;
   std::string odom_topic_name_;
+  std::string port_name_;
 
   bool simulated_robot_ = false;
   int sim_control_rate_ = 50;
@@ -177,6 +201,8 @@ class TracerMessenger {
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<tracer_msgs::msg::TracerStatus>::SharedPtr status_pub_;
   rclcpp::Publisher<tracer_msgs::msg::TracerRCState>::SharedPtr rc_status_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+      diagnostics_pub_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr motion_cmd_sub_;
   rclcpp::Subscription<tracer_msgs::msg::TracerLightCmd>::SharedPtr
@@ -191,10 +217,27 @@ class TracerMessenger {
 
   rclcpp::Time last_time_;
   rclcpp::Time current_time_;
+  rclcpp::Time last_diagnostics_time_;
+
+  enum class LifecycleState {
+    kOffline,
+    kConnecting,
+    kReady,
+    kError,
+  };
+
+  LifecycleState lifecycle_state_ = LifecycleState::kOffline;
+  SdkTimePoint last_commanded_mode_time_;
+
+  static constexpr double kFeedbackTimeoutSec = 0.5;
+  static constexpr double kCommandedModeRetryPeriodSec = 1.0;
+  static constexpr double kDiagnosticsPeriodSec = 1.0;
 
   void TwistCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
     if (!simulated_robot_) {
-      SetTracerMotionCommand(msg);
+      if (lifecycle_state_ == LifecycleState::kReady) {
+        SetTracerMotionCommand(msg);
+      }
     } else {
       std::lock_guard<std::mutex> guard(twist_mutex_);
       twist_time_ = node_->get_clock()->now();
@@ -205,6 +248,108 @@ class TracerMessenger {
   void SetTracerMotionCommand(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     tracer_->SetMotionCommand(msg->linear.x, msg->angular.z);
+  }
+
+  double GetFeedbackAgeSec(const TracerCoreState &state) const {
+    if (state.time_stamp == SdkTimePoint{}) {
+      return -1.0;
+    }
+    return std::chrono::duration<double>(SdkClock::now() - state.time_stamp)
+        .count();
+  }
+
+  LifecycleState GetLifecycleState(const TracerCoreState &state,
+                                   double feedback_age_sec) const {
+    if (feedback_age_sec < 0.0 || feedback_age_sec > kFeedbackTimeoutSec) {
+      return LifecycleState::kOffline;
+    }
+    if (state.system_state.error_code != 0) {
+      return LifecycleState::kError;
+    }
+    if (state.system_state.control_mode != CONTROL_MODE_CAN) {
+      return LifecycleState::kConnecting;
+    }
+    return LifecycleState::kReady;
+  }
+
+  void MaybeEnableCommandedMode() {
+    const auto now = SdkClock::now();
+    if (last_commanded_mode_time_ != SdkTimePoint{} &&
+        std::chrono::duration<double>(now - last_commanded_mode_time_).count() <
+            kCommandedModeRetryPeriodSec) {
+      return;
+    }
+    tracer_->EnableCommandedMode();
+    last_commanded_mode_time_ = now;
+  }
+
+  const char *LifecycleStateName(LifecycleState state) const {
+    switch (state) {
+      case LifecycleState::kOffline:
+        return "offline";
+      case LifecycleState::kConnecting:
+        return "connecting";
+      case LifecycleState::kReady:
+        return "ready";
+      case LifecycleState::kError:
+        return "error";
+    }
+    return "unknown";
+  }
+
+  uint8_t DiagnosticsLevel(LifecycleState state) const {
+    switch (state) {
+      case LifecycleState::kReady:
+        return diagnostic_msgs::msg::DiagnosticStatus::OK;
+      case LifecycleState::kError:
+        return diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+      case LifecycleState::kOffline:
+      case LifecycleState::kConnecting:
+        return diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    }
+    return diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+  }
+
+  diagnostic_msgs::msg::KeyValue MakeKeyValue(const std::string &key,
+                                              const std::string &value) const {
+    diagnostic_msgs::msg::KeyValue pair;
+    pair.key = key;
+    pair.value = value;
+    return pair;
+  }
+
+  void PublishDiagnostics(const TracerCoreState &state,
+                          double feedback_age_sec,
+                          LifecycleState lifecycle_state) {
+    if ((current_time_ - last_diagnostics_time_).seconds() <
+        kDiagnosticsPeriodSec) {
+      return;
+    }
+
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    status.name = "tracer/base";
+    status.hardware_id = "tracer:" + port_name_;
+    status.level = DiagnosticsLevel(lifecycle_state);
+    status.message = LifecycleStateName(lifecycle_state);
+    status.values = {
+        MakeKeyValue("state", LifecycleStateName(lifecycle_state)),
+        MakeKeyValue("port", port_name_),
+        MakeKeyValue("feedback_age_sec", std::to_string(feedback_age_sec)),
+        MakeKeyValue("control_mode",
+                     std::to_string(static_cast<int>(
+                         state.system_state.control_mode))),
+        MakeKeyValue("battery_voltage",
+                     std::to_string(state.system_state.battery_voltage)),
+        MakeKeyValue("error_code",
+                     std::to_string(state.system_state.error_code)),
+    };
+
+    diagnostic_msgs::msg::DiagnosticArray array;
+    array.header.stamp = current_time_;
+    array.status.push_back(status);
+    diagnostics_pub_->publish(array);
+
+    last_diagnostics_time_ = current_time_;
   }
 
   void GetMotionForSim(double& linear, double& angular) {

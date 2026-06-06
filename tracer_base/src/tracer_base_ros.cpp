@@ -69,13 +69,13 @@ void TracerBaseRos::Run() {
   messenger->SetOdometryFrame(odom_frame_);
   messenger->SetBaseFrame(base_frame_);
   messenger->SetOdometryTopicName(odom_topic_name_);
+  messenger->SetPortName(port_name_);
   if (simulated_robot_) {
     messenger->SetSimulationMode(sim_control_rate_);
   } else {
     // connect to robot and setup ROS subscription
     if (port_name_.find("can") != std::string::npos) {
       if (robot_->Connect(port_name_)) {
-        robot_->EnableCommandedMode();
         std::cout << "Using CAN bus to talk with the robot" << std::endl;
       } else {
         std::cout << "Failed to connect to the robot CAN bus" << std::endl;
@@ -91,7 +91,7 @@ void TracerBaseRos::Run() {
   messenger->SetupSubscription();
   keep_running_ = true;
   rclcpp::Rate rate(50);
-  while (keep_running_) {
+  while (rclcpp::ok() && keep_running_) {
     simulated_robot_ ? messenger->PublishSimStateToROS() : messenger->PublishStateToROS();
     rclcpp::spin_some(shared_from_this());
     rate.sleep();
